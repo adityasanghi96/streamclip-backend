@@ -1,0 +1,27 @@
+{
+  "name": "streamclip-backend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "ts-node src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "typeorm": "ts-node ./node_modules/typeorm/cli.js -d src/db/data-source.ts",
+    "migration:generate": "npm run typeorm -- migration:generate src/db/migrations/streamclip_migration",
+    "migration:run": "npm run typeorm -- migration:run"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@types/express": "^5.0.5",
+    "axios": "^1.13.2",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "pg": "^8.16.3",
+    "reflect-metadata": "^0.2.2",
+    "ts-node": "^10.9.2",
+    "tsc": "^2.0.4",
+    "typeorm": "^0.3.27"
+  }
+}
