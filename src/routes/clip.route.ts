@@ -132,7 +132,7 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
         console.error("Failed to send Discord webhook", err);
       }
     }
-    return res.status(200).send("New clip created. Clipped by: "+clippedBy + updatedInDiscord ? " Updated in discord." : "");
+    return res.status(200).send("New clip created. Clipped by: " + clippedBy + (updatedInDiscord ? " Updated in discord." : ""));
   } catch (err) {
     console.error(err);
     res.status(500).send("Internal error");
