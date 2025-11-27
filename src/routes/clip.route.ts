@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getActiveLiveVideoId } from "../services/youtube.service";
+import { getActiveLiveVideoId, getLiveStreamOffset } from "../services/youtube.service";
 import { fetchYouTubeChannelInfo } from "../services/youtubeChannel.service";
 import { isOlderThan } from "../utils/time";
 import AppDataSource from "../db/data-source";
@@ -20,15 +20,20 @@ router.get("/health", async (req, res) => {
 router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
   try {
     const { provider, channelId, chatId, clipName } = req.params;
-    const offsetSeconds = String(req.query.delay || "0");
+    const delaySeconds = Number(req.query.delay || 0);
     const clippedBy = (req.query.user as string) || chatId;
 
     if (provider !== "youtube") {
       return res.status(400).send("Only YouTube supported currently");
     }
 
-    const liveVideoId = await getActiveLiveVideoId(channelId);
-    if (!liveVideoId) return res.status(404).send("Channel not live");
+    const liveInfo = await getLiveStreamOffset(channelId);
+    if (!liveInfo) return res.status(404).send("Channel not live");
+
+    const liveVideoId = liveInfo.liveVideoId;
+    const offsetSeconds = liveInfo.offsetSec;
+
+    const finalOffset = Math.max(0, offsetSeconds - delaySeconds);
 
     const chanRepo = AppDataSource.getRepository(Channel);
 
@@ -65,7 +70,7 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
       chatId,
       clipName,
       liveVideoId,
-      offsetSeconds,
+      offsetSeconds: finalOffset.toString(),
       clippedBy
     });
 
@@ -73,7 +78,7 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
 
     return res.json({
       // message: "Clip stored",
-      clipUrl: `https://youtube.com/watch?v=${liveVideoId}&t=${offsetSeconds}s`,
+      clipUrl: `https://youtube.com/watch?v=${liveVideoId}&t=${finalOffset}s`,
       // clipId: clip.id,
       // channel
     });
