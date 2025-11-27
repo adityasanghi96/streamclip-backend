@@ -20,10 +20,10 @@ export class Channel {
   @Column()
   imageUrl!: string;
 
-  @Column()
+  @Column({ nullable: true })
   handle?: string;
 
-  @Column()
+  @Column({ nullable: true })
   profileUrl?: string;
 
   @Column({ nullable: true })
