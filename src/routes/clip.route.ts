@@ -8,6 +8,15 @@ import { Channel } from "../db/entities/Channel";
 
 const router = Router();
 
+router.get("/health", async (req, res) => {
+  try {
+    return res.status(200).send("OK");
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Internal error");
+  }
+});
+
 router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
   try {
     const { provider, channelId, chatId, clipName } = req.params;
