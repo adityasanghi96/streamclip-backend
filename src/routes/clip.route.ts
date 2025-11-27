@@ -38,7 +38,7 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
 
     const offsetSeconds = liveInfo.offsetSec;
 
-    const finalOffset = Math.max(0, offsetSeconds - delaySeconds);
+    const finalOffset = Math.max(0, offsetSeconds + delaySeconds);
 
     console.log({liveInfo, offsetSeconds, finalOffset});
 
