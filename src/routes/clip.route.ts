@@ -10,7 +10,7 @@ const router = Router();
 
 router.get("/health", async (req, res) => {
   try {
-    return res.status(200).send("OK");
+    res.status(200).json({ status: 'ok' });
   } catch (err) {
     console.error(err);
     res.status(500).send("Internal error");
