@@ -39,6 +39,9 @@ export class Clip {
   @Column()
   clippedBy!: string;
 
+  @Column({ nullable: true })
+  thumbnailUrl?: string;
+
   @CreateDateColumn()
   createdAt!: Date;
 

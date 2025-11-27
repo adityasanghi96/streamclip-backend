@@ -15,19 +15,56 @@ export async function getActiveLiveVideoId(channelId: string) {
 
 // Returns { videoId, liveOffsetSeconds }
 export async function getLiveStreamOffset(liveVideoId: string) {
-  const url = `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${liveVideoId}&key=${ENV.YT_API_KEY}`;
+  const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id=${liveVideoId}&key=${ENV.YT_API_KEY}`;
 
   const res = await axios.get(url);
-  const details = res.data.items?.[0]?.liveStreamingDetails;
-  if (!details?.actualStartTime) return null;
+  const item = res.data.items?.[0];
+  if (!item) return {};
 
+  const details = item.liveStreamingDetails;
+  const snippet = item.snippet;
+
+  if (!details?.actualStartTime) return {};
+  
   const start = new Date(details.actualStartTime).getTime();
   const now = Date.now();
-  const offsetSec = Math.floor((now - start) / 1000);
+  let offsetSec = Math.floor((now - start) / 1000);
 
-  console.log({offsetSec: offsetSec})
+  // 🔹 If live stream is not DVR enabled → must always trim offset to 0
+  const isDvrEnabled = details.enableDvr !== false;
+  if (!isDvrEnabled) offsetSec = 0;
 
-  return { liveVideoId, offsetSec };
+  // Best thumbnail
+  const thumbnails = snippet?.thumbnails || {};
+  const thumbnailUrl =
+    thumbnails.maxres?.url ||
+    thumbnails.standard?.url ||
+    thumbnails.high?.url ||
+    thumbnails.medium?.url ||
+    thumbnails.default?.url ||
+    null;
+
+  const title = snippet?.title || "Live Stream";
+
+  const youtubeUrl = `https://www.youtube.com/watch?v=${liveVideoId}&t=${offsetSec}s`;
+
+  console.log({
+    liveVideoId,
+    offsetSec,
+    title,
+    thumbnailUrl,
+    isDvrEnabled,
+    youtubeUrl
+  });
+
+  return {
+    liveVideoId,
+    offsetSec,
+    title,
+    thumbnailUrl,
+    isDvrEnabled,
+    youtubeUrl
+  };
 }
 
 // Helper to get Live Chat ID

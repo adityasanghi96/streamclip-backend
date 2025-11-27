@@ -1,10 +1,11 @@
 import { Router } from "express";
-import { fetchLiveChatModerators, getActiveLiveVideoId, getLiveChatId, getLiveStreamOffset } from "../services/youtube.service";
+import { getActiveLiveVideoId, getLiveStreamOffset } from "../services/youtube.service";
 import { fetchYouTubeChannelFromHandle, fetchYouTubeChannelInfo } from "../services/youtubeChannel.service";
 import { isOlderThan } from "../utils/time";
 import AppDataSource from "../db/data-source";
 import { Clip } from "../db/entities/Clip";
 import { Channel } from "../db/entities/Channel";
+import axios from "axios";
 
 const router = Router();
 
@@ -22,6 +23,7 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
     const { provider, channelId, chatId, clipName } = req.params;
     const delaySeconds = Number(req.query.delay || 0);
     const clippedBy = (req.query.user as string) || chatId;
+    let updatedInDiscord = false;
 
     console.log(`Clip request: ${provider} ${channelId} ${chatId} ${clipName} ${delaySeconds} ${clippedBy}`);
 
@@ -33,14 +35,12 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
     if (!liveVideoId) return res.status(404).send("Channel not live");
 
     // Now pass *videoId*
-    const liveInfo = await getLiveStreamOffset(liveVideoId);
-    if (!liveInfo) return res.status(404).send("Could not fetch live stream offset");
-
-    const offsetSeconds = liveInfo.offsetSec;
+    const {offsetSec: offsetSeconds, title, thumbnailUrl, isDvrEnabled, youtubeUrl} = await getLiveStreamOffset(liveVideoId);
+    if (!offsetSeconds) return res.status(404).send("Could not fetch live stream offset");
 
     const finalOffset = Math.max(0, offsetSeconds + delaySeconds);
 
-    console.log({liveInfo, offsetSeconds, finalOffset});
+    console.log({ offsetSeconds, finalOffset});
 
     const chanRepo = AppDataSource.getRepository(Channel);
 
@@ -82,13 +82,57 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
       clipName,
       liveVideoId,
       offsetSeconds: finalOffset.toString(),
-      clippedBy
+      clippedBy,
+      thumbnailUrl
     });
 
     await clipRepo.save(clip);
 
-    return res.status(200).send("New clip created. Clipped by: "+clippedBy);
-
+    if (channel.discordWebhookUrl) {
+      const ytClipUrl = `https://www.youtube.com/watch?v=${liveInfo.liveVideoId}&t=${finalOffset}s`;
+      const offsetFormatted = formatOffset(finalOffset);
+      const embedPayload = {
+        embeds: [
+          {
+            title: `🎬 ${title || clip.clipName || clipName}`,
+            url: ytClipUrl,
+            description: `⏱️ Jump to **${offsetFormatted}** in the stream`,
+            color: 0xff0000,
+            author: {
+              name: channel.name || channel.handle || channel.ytChannelId,
+              url: channel.profileUrl
+            },
+            thumbnail: {
+              url: channel.imageUrl || undefined
+            },
+            image: thumbnailUrl ? { url: thumbnailUrl } : undefined,
+            fields: [
+              {
+                name: "Clipped by",
+                value: clippedBy,
+                inline: true
+              },
+              {
+                name: "Video ID",
+                value: liveVideoId,
+                inline: true
+              }
+            ],
+            footer: {
+              text: `Clip offset: ${offsetFormatted}`
+            },
+            timestamp: new Date().toISOString()
+          }
+        ]
+      };
+      try {
+        await axios.post(channel.discordWebhookUrl, embedPayload);
+        updatedInDiscord=true;
+      } catch (err) {
+        console.error("Failed to send Discord webhook", err);
+      }
+    }
+    return res.status(200).send("New clip created. Clipped by: "+clippedBy + updatedInDiscord ? " Updated in discord." : "");
   } catch (err) {
     console.error(err);
     res.status(500).send("Internal error");
@@ -154,3 +198,10 @@ router.post("/discord/webhook", async (req, res) => {
 
 
 export default router;
+
+function formatOffset(seconds: number) {
+  const h = Math.floor(seconds / 3600).toString().padStart(2, "0");
+  const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, "0");
+  const s = (seconds % 60).toString().padStart(2, "0");
+  return `${h}:${m}:${s}`;
+}
