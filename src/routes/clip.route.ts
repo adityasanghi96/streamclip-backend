@@ -72,10 +72,10 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
     await clipRepo.save(clip);
 
     return res.json({
-      message: "Clip stored",
+      // message: "Clip stored",
       clipUrl: `https://youtube.com/watch?v=${liveVideoId}&t=${offsetSeconds}s`,
-      clipId: clip.id,
-      channel
+      // clipId: clip.id,
+      // channel
     });
 
   } catch (err) {
