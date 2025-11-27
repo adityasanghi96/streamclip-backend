@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getActiveLiveVideoId, getLiveStreamOffset } from "../services/youtube.service";
+import { getLiveStreamOffset } from "../services/youtube.service";
 import { fetchYouTubeChannelInfo } from "../services/youtubeChannel.service";
 import { isOlderThan } from "../utils/time";
 import AppDataSource from "../db/data-source";
