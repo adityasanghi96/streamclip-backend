@@ -121,10 +121,7 @@ router.get("/webhook/:provider/:channelId/:chatId/:webhook", async (req, res) =>
         profileUrl: info.url,
       });
 
-      return res.status(403).json({
-        error:
-          "Channel registered but webhook not set. Only channel owner or live moderator can approve webhook update.",
-      });
+      return res.status(403).send("Channel registered but webhook not set. Only channel owner or live moderator can approve webhook update.");
     }
 
     // ---- AUTH CHECK STARTS ----
@@ -142,12 +139,11 @@ router.get("/webhook/:provider/:channelId/:chatId/:webhook", async (req, res) =>
       if (!liveChatId) return res.status(403).send("Live chat not found");
 
       const moderators = await fetchLiveChatModerators(liveChatId);
+      console.log("Mods:",moderators.join(","));
 
       const isMod = moderators.some((m: string) => m.toLowerCase() === user);
       if (!isMod) {
-        return res.status(403).json({
-          error: "Only channel owner or live chat moderator can update webhook",
-        });
+        return res.status(403).send("Only channel owner or live chat moderator can update webhook");
       }
 
       console.log("Moderator verified:", user);
@@ -157,10 +153,7 @@ router.get("/webhook/:provider/:channelId/:chatId/:webhook", async (req, res) =>
     channel.discordWebhookUrl = webhook;
     await chanRepo.save(channel);
 
-    return res.json({
-      message: "Webhook updated successfully",
-      webhook,
-    });
+    return res.status(200).send("Webhook updated successfully");
 
   } catch (err) {
     console.error(err);
