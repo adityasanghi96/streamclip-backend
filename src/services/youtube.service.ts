@@ -3,9 +3,10 @@ import { ENV } from "../env";
 
 // Returns { videoId, liveOffsetSeconds }
 export async function getLiveStreamOffset(channelId: string) {
-  const url = `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${channelId}&key=${process.env.YT_API_KEY}`;
+  const url = `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${channelId}&key=${ENV.YT_API_KEY}`;
 
   const res = await axios.get(url);
+  console.log(`YT API response: ${JSON.stringify(res.data)}`);
   const details = res.data.items?.[0]?.liveStreamingDetails;
   if (!details?.actualStartTime) return null;
 
