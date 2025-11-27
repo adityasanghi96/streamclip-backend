@@ -23,17 +23,23 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
     const delaySeconds = Number(req.query.delay || 0);
     const clippedBy = (req.query.user as string) || chatId;
 
+    console.log(`Clip request: ${provider} ${channelId} ${chatId} ${clipName} ${delaySeconds} ${clippedBy}`);
+
     if (provider !== "youtube") {
       return res.status(400).send("Only YouTube supported currently");
     }
 
     const liveInfo = await getLiveStreamOffset(channelId);
+    console.log(`Live info: ${JSON.stringify(liveInfo)}`);
+
     if (!liveInfo) return res.status(404).send("Channel not live");
 
     const liveVideoId = liveInfo.liveVideoId;
     const offsetSeconds = liveInfo.offsetSec;
 
     const finalOffset = Math.max(0, offsetSeconds - delaySeconds);
+
+    console.log({liveInfo, offsetSeconds, finalOffset});
 
     const chanRepo = AppDataSource.getRepository(Channel);
 
