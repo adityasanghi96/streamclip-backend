@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { fetchLiveChatModerators, getActiveLiveVideoId, getLiveChatId, getLiveStreamOffset } from "../services/youtube.service";
-import { fetchYouTubeChannelInfo } from "../services/youtubeChannel.service";
+import { fetchYouTubeChannelFromHandle, fetchYouTubeChannelInfo } from "../services/youtubeChannel.service";
 import { isOlderThan } from "../utils/time";
 import AppDataSource from "../db/data-source";
 import { Clip } from "../db/entities/Clip";
@@ -95,69 +95,60 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
   }
 });
 
-router.get("/webhook/:provider/:channelId/:chatId/:webhook", async (req, res) => {
+router.post("/discord/webhook", async (req, res) => {
   try {
-    const user = (req.query.user as string)?.toLowerCase();
-    if (!user) return res.status(400).send("User not found");
+    const { handle, webhookUrl } = req.body || {};
 
-    const { provider, channelId, webhook } = req.params;
-    if (provider !== "youtube") {
-      return res.status(400).send("Only YouTube supported currently");
+    if (!handle || !webhookUrl) {
+      return res.status(400).json({ error: "handle and webhookUrl required" });
+    }
+
+    if(!webhookUrl.startsWith('https://discord.com/api/webhooks')){
+      return res.status(400).json({ error: "webhook should start with https://discord.com/api/webhooks" });
+    }
+
+    const normalizedHandle = handle.toLowerCase().startsWith("@")
+      ? handle.toLowerCase()
+      : "@" + handle.toLowerCase();
+
+    // Step 1: Resolve handle → channelId
+    const {id,name,imageUrl,url} = await fetchYouTubeChannelFromHandle(normalizedHandle);
+
+    if (!id) {
+      return res.status(404).json({ error: "YouTube channel not found" });
     }
 
     const chanRepo = AppDataSource.getRepository(Channel);
 
-    let channel = await chanRepo.findOneBy({ ytChannelId: channelId });
+    let channel = await chanRepo.findOne({
+      where: { ytChannelId: id }
+    });
 
-    const info = await fetchYouTubeChannelInfo(channelId);
-    if (!info) return res.status(404).send("Channel info not found via API");
-    // If the channel does not exist → create but DO NOT set webhook
     if (!channel) {
+      // Create new channel record
       channel = chanRepo.create({
-        ytChannelId: channelId,
-        name: info.name,
-        imageUrl: info.imageUrl,
-        handle: info.handle,
-        profileUrl: info.url,
+        ytChannelId: id,
+        handle: normalizedHandle,
+        name: name,
+        imageUrl: imageUrl,
+        profileUrl: url,
+        discordWebhookUrl: webhookUrl
       });
-
-      return res.status(403).send("Channel registered but webhook not set. Only channel owner or live moderator can approve webhook update.");
-    }
-
-    // ---- AUTH CHECK STARTS ----
-    const ownerHandle = channel.handle?.toLowerCase();
-
-    // If owner → allow
-    if (ownerHandle && user === ownerHandle) {
-      console.log("Owner verified:", user);
     } else {
-      // If not owner → check live moderators
-      const liveVideoId = await getActiveLiveVideoId(channelId);
-      if (!liveVideoId) return res.status(403).send("Channel not live, cannot verify moderators");
-
-      const liveChatId = await getLiveChatId(liveVideoId);
-      if (!liveChatId) return res.status(403).send("Live chat not found");
-
-      const moderators = await fetchLiveChatModerators(liveChatId);
-      console.log("Mods:",moderators.join(","));
-
-      const isMod = moderators.some((m: string) => m.toLowerCase() === user);
-      if (!isMod) {
-        return res.status(403).send("Only channel owner or live chat moderator can update webhook");
-      }
-
-      console.log("Moderator verified:", user);
+      // Update webhook on existing channel
+      channel.discordWebhookUrl = webhookUrl;
     }
-    // ---- AUTH CHECK ENDS ----
 
-    channel.discordWebhookUrl = webhook;
     await chanRepo.save(channel);
 
-    return res.status(200).send("Webhook updated successfully");
+    return res.status(channel ? 200 : 201).json({
+      message: "Webhook saved successfully",
+      channel
+    });
 
   } catch (err) {
     console.error(err);
-    res.status(500).send("Internal error");
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
