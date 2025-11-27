@@ -1,12 +1,23 @@
 import axios from "axios";
 import { ENV } from "../env";
 
-// Returns { videoId, liveOffsetSeconds }
-export async function getLiveStreamOffset(channelId: string) {
-  const url = `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${channelId}&key=${ENV.YT_API_KEY}`;
+export async function getActiveLiveVideoId(channelId: string) {
+  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${channelId}&eventType=live&type=video&key=${ENV.YT_API_KEY}`;
 
   const res = await axios.get(url);
-  console.log(`YT API response: ${JSON.stringify(res.data)}`);
+
+  if (res.data.items?.length > 0) {
+    console.log({liveVideoId: res.data.items[0]?.id?.videoId})
+    return res.data.items[0]?.id?.videoId;
+  }
+  return null;
+}
+
+// Returns { videoId, liveOffsetSeconds }
+export async function getLiveStreamOffset(liveVideoId: string) {
+  const url = `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${liveVideoId}&key=${ENV.YT_API_KEY}`;
+
+  const res = await axios.get(url);
   const details = res.data.items?.[0]?.liveStreamingDetails;
   if (!details?.actualStartTime) return null;
 
@@ -14,6 +25,7 @@ export async function getLiveStreamOffset(channelId: string) {
   const now = Date.now();
   const offsetSec = Math.floor((now - start) / 1000);
 
-  return { liveVideoId: res.data.items[0].id.videoId, offsetSec };
-}
+  console.log({offsetSec: offsetSec})
 
+  return { liveVideoId, offsetSec };
+}

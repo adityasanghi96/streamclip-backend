@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getLiveStreamOffset } from "../services/youtube.service";
+import { getActiveLiveVideoId, getLiveStreamOffset } from "../services/youtube.service";
 import { fetchYouTubeChannelInfo } from "../services/youtubeChannel.service";
 import { isOlderThan } from "../utils/time";
 import AppDataSource from "../db/data-source";
@@ -29,12 +29,13 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
       return res.status(400).send("Only YouTube supported currently");
     }
 
-    const liveInfo = await getLiveStreamOffset(channelId);
-    console.log(`Live info: ${JSON.stringify(liveInfo)}`);
+    const liveVideoId = await getActiveLiveVideoId(channelId);
+    if (!liveVideoId) return res.status(404).send("Channel not live");
 
-    if (!liveInfo) return res.status(404).send("Channel not live");
+    // Now pass *videoId*
+    const liveInfo = await getLiveStreamOffset(liveVideoId);
+    if (!liveInfo) return res.status(404).send("Could not fetch live stream offset");
 
-    const liveVideoId = liveInfo.liveVideoId;
     const offsetSeconds = liveInfo.offsetSec;
 
     const finalOffset = Math.max(0, offsetSeconds - delaySeconds);
