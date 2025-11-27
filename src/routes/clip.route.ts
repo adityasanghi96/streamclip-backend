@@ -89,7 +89,7 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
     await clipRepo.save(clip);
 
     if (channel.discordWebhookUrl) {
-      const ytClipUrl = `https://www.youtube.com/watch?v=${liveInfo.liveVideoId}&t=${finalOffset}s`;
+      const ytClipUrl = `https://www.youtube.com/watch?v=${liveVideoId}&t=${finalOffset}s`;
       const offsetFormatted = formatOffset(finalOffset);
       const embedPayload = {
         embeds: [
