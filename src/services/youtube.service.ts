@@ -29,3 +29,23 @@ export async function getLiveStreamOffset(liveVideoId: string) {
 
   return { liveVideoId, offsetSec };
 }
+
+// Helper to get Live Chat ID
+export async function getLiveChatId(videoId: string) {
+  const url = `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${videoId}&key=${ENV.YT_API_KEY}`;
+  const res = await axios.get(url);
+  return res.data.items?.[0]?.liveStreamingDetails?.activeLiveChatId || null;
+}
+
+// Helper to fetch Live Chat Moderators
+export async function fetchLiveChatModerators(liveChatId: string): Promise<string[]> {
+  const url = `https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId=${liveChatId}&part=snippet,authorDetails&key=${ENV.YT_API_KEY}`;
+  const res = await axios.get(url);
+
+  const mods = res.data.items
+    ?.filter((msg: any) => msg.authorDetails.isChatModerator)
+    ?.map((msg: any) => msg.authorDetails.channelId)
+    ?.filter(Boolean);
+
+  return mods || [];
+}

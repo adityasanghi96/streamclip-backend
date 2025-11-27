@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getActiveLiveVideoId, getLiveStreamOffset } from "../services/youtube.service";
+import { fetchLiveChatModerators, getActiveLiveVideoId, getLiveChatId, getLiveStreamOffset } from "../services/youtube.service";
 import { fetchYouTubeChannelInfo } from "../services/youtubeChannel.service";
 import { isOlderThan } from "../utils/time";
 import AppDataSource from "../db/data-source";
@@ -87,11 +87,79 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
 
     await clipRepo.save(clip);
 
+    return res.status(200).send("New clip created. Clipped by: "+clippedBy);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Internal error");
+  }
+});
+
+router.get("/webhook/:provider/:channelId/:chatId/:webhook", async (req, res) => {
+  try {
+    const user = (req.query.user as string)?.toLowerCase();
+    if (!user) return res.status(400).send("User not found");
+
+    const { provider, channelId, webhook } = req.params;
+    if (provider !== "youtube") {
+      return res.status(400).send("Only YouTube supported currently");
+    }
+
+    const chanRepo = AppDataSource.getRepository(Channel);
+
+    let channel = await chanRepo.findOneBy({ ytChannelId: channelId });
+
+    const info = await fetchYouTubeChannelInfo(channelId);
+    if (!info) return res.status(404).send("Channel info not found via API");
+    // If the channel does not exist → create but DO NOT set webhook
+    if (!channel) {
+      channel = chanRepo.create({
+        ytChannelId: channelId,
+        name: info.name,
+        imageUrl: info.imageUrl,
+        handle: info.handle,
+        profileUrl: info.url,
+      });
+
+      return res.status(403).json({
+        error:
+          "Channel registered but webhook not set. Only channel owner or live moderator can approve webhook update.",
+      });
+    }
+
+    // ---- AUTH CHECK STARTS ----
+    const ownerHandle = channel.handle?.toLowerCase();
+
+    // If owner → allow
+    if (ownerHandle && user === ownerHandle) {
+      console.log("Owner verified:", user);
+    } else {
+      // If not owner → check live moderators
+      const liveVideoId = await getActiveLiveVideoId(channelId);
+      if (!liveVideoId) return res.status(403).send("Channel not live, cannot verify moderators");
+
+      const liveChatId = await getLiveChatId(liveVideoId);
+      if (!liveChatId) return res.status(403).send("Live chat not found");
+
+      const moderators = await fetchLiveChatModerators(liveChatId);
+
+      const isMod = moderators.some((m: string) => m.toLowerCase() === user);
+      if (!isMod) {
+        return res.status(403).json({
+          error: "Only channel owner or live chat moderator can update webhook",
+        });
+      }
+
+      console.log("Moderator verified:", user);
+    }
+    // ---- AUTH CHECK ENDS ----
+
+    channel.discordWebhookUrl = webhook;
+    await chanRepo.save(channel);
+
     return res.json({
-      // message: "Clip stored",
-      clipUrl: `https://youtube.com/watch?v=${liveVideoId}&t=${finalOffset}s`,
-      // clipId: clip.id,
-      // channel
+      message: "Webhook updated successfully",
+      webhook,
     });
 
   } catch (err) {
@@ -99,5 +167,6 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
     res.status(500).send("Internal error");
   }
 });
+
 
 export default router;
