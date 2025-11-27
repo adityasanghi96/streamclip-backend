@@ -20,6 +20,12 @@ export class Channel {
   @Column()
   imageUrl!: string;
 
+  @Column()
+  handle?: string;
+
+  @Column()
+  profileUrl?: string;
+
   @Column({ nullable: true })
   discordWebhookUrl?: string;
 

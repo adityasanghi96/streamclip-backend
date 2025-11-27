@@ -57,12 +57,16 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
         channel = chanRepo.create({
           ytChannelId: channelId,
           name: info.name,
-          imageUrl: info.imageUrl
+          imageUrl: info.imageUrl,
+          handle: info.handle,
+          profileUrl: info.url
         });
       } else {
         // Refresh existing
         channel.name = info.name;
         channel.imageUrl = info.imageUrl;
+        channel.handle = info.handle;
+        channel.profileUrl = info.url;
       }
 
       await chanRepo.save(channel);
