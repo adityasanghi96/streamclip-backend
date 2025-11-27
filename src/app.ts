@@ -3,6 +3,6 @@ import clipRoute from "./routes/clip.route";
 
 const app = express();
 app.use(express.json());
-app.use(clipRoute);
+app.use("/api", clipRoute);
 
 export default app;
