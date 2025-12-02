@@ -94,7 +94,7 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
       const embedPayload = {
         embeds: [
           {
-            title: `🎬 ${title || clip.clipName || clipName}`,
+            title: `🎬 ${clip.clipName || clipName || title}`,
             url: ytClipUrl,
             description: `⏱️ Jump to **${offsetFormatted}** in the stream`,
             color: 0xff0000,
