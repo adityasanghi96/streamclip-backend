@@ -1,4 +1,5 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import { getActiveLiveVideoId, getLiveStreamOffset } from "../services/youtube.service";
 import { fetchYouTubeChannelFromHandle, fetchYouTubeChannelInfo } from "../services/youtubeChannel.service";
 import { isOlderThan } from "../utils/time";
@@ -8,6 +9,14 @@ import { Channel } from "../db/entities/Channel";
 import axios from "axios";
 
 const router = Router();
+
+const channelClipsLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30,
+  message: { error: "Too many requests, please try again after a minute." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 router.get("/health", async (req, res) => {
   try {
@@ -136,6 +145,57 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).send("Internal error");
+  }
+});
+
+router.post("/channel/clips", channelClipsLimiter, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const { channelId: ytChannelIdParam, handle: handleParam } = body;
+    const limit = Math.min(Math.max(Number(body.limit) || 20, 1), 100);
+    const offset = Math.max(Number(body.offset) || 0, 0);
+
+    if (!ytChannelIdParam && !handleParam) {
+      return res.status(400).json({ error: "channelId or handle required" });
+    }
+
+    const chanRepo = AppDataSource.getRepository(Channel);
+    let channel: Channel | null = null;
+
+    if (ytChannelIdParam) {
+      channel = await chanRepo.findOneBy({ ytChannelId: String(ytChannelIdParam) });
+    } else if (handleParam) {
+      const normalizedHandle = String(handleParam).toLowerCase().startsWith("@")
+        ? String(handleParam).toLowerCase()
+        : "@" + String(handleParam).toLowerCase();
+      channel = await chanRepo.findOne({ where: { handle: normalizedHandle } });
+      if (!channel) {
+        const { id } = await fetchYouTubeChannelFromHandle(normalizedHandle);
+        if (id) channel = await chanRepo.findOneBy({ ytChannelId: id });
+      }
+    }
+
+    if (!channel) {
+      return res.status(404).json({ error: "Channel not found" });
+    }
+
+    const clipRepo = AppDataSource.getRepository(Clip);
+    const [clips, total] = await clipRepo.findAndCount({
+      where: { channelId: channel.id },
+      order: { createdAt: "DESC" },
+      take: limit,
+      skip: offset,
+    });
+
+    return res.status(200).json({
+      clips,
+      total,
+      limit,
+      offset,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
