@@ -4,7 +4,10 @@ import {
   PrimaryGeneratedColumn,
   CreateDateColumn,
   UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
 } from "typeorm";
+import { User } from "./User";
 
 @Entity()
 export class Channel {
@@ -12,7 +15,10 @@ export class Channel {
   id!: number; // internal DB ID
 
   @Column({ unique: true })
-  ytChannelId!: string; // YouTube Channel ID
+  ytChannelId!: string; // platform channel id (YouTube, Twitch, …)
+
+  @Column({ type: "varchar", default: "youtube" })
+  provider!: string;
 
   @Column()
   name!: string;
@@ -26,8 +32,18 @@ export class Channel {
   @Column({ nullable: true })
   profileUrl?: string;
 
-  @Column({ nullable: true })
-  discordWebhookUrl?: string;
+  @Column({ type: "varchar", nullable: true })
+  discordWebhookUrl?: string | null;
+
+  @ManyToOne(() => User, (user) => user.channels, { nullable: true, onDelete: "SET NULL" })
+  @JoinColumn({ name: "ownerId" })
+  owner?: User | null;
+
+  @Column({ type: "int", nullable: true })
+  ownerId?: number | null;
+
+  @Column({ type: "int", nullable: true })
+  followerCount?: number | null;
 
   @CreateDateColumn()
   createdAt!: Date;

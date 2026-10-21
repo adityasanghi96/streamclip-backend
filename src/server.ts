@@ -2,10 +2,12 @@ import "reflect-metadata"; // REQUIRED FIRST LINE!!!
 import AppDataSource from "./db/data-source";
 import app from "./app";
 import { ENV } from "./env";
+import { startNativeClipIngest } from "./services/nativeClipIngest.service";
 
 AppDataSource.initialize()
   .then(() => {
     console.log("Database connected");
+    startNativeClipIngest();
 
     const server = app.listen(ENV.PORT, () => {
       console.log("Server running on port " + ENV.PORT);

@@ -15,7 +15,7 @@ export async function getActiveLiveVideoId(channelId: string) {
 
 // Returns { videoId, liveOffsetSeconds }
 export async function getLiveStreamOffset(liveVideoId: string) {
-  const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id=${liveVideoId}&key=${ENV.YT_API_KEY}`;
+  const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails,topicDetails&id=${liveVideoId}&key=${ENV.YT_API_KEY}`;
 
   const res = await axios.get(url);
   const item = res.data.items?.[0];
@@ -63,7 +63,11 @@ export async function getLiveStreamOffset(liveVideoId: string) {
     title,
     thumbnailUrl,
     isDvrEnabled,
-    youtubeUrl
+    youtubeUrl,
+    tags: Array.isArray(snippet?.tags) ? snippet.tags.map(String) : [],
+    topicCategories: Array.isArray(item.topicDetails?.topicCategories)
+      ? item.topicDetails.topicCategories.map(String)
+      : [],
   };
 }
 

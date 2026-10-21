@@ -8,6 +8,7 @@ import {
   JoinColumn,
 } from "typeorm";
 import { Channel } from "./Channel";
+import { Game } from "./Game";
 
 @Entity()
 export class Clip {
@@ -41,6 +42,16 @@ export class Clip {
 
   @Column({ nullable: true })
   thumbnailUrl?: string;
+
+  @Column({ type: "varchar", default: "nightbot" })
+  source!: "native" | "nightbot";
+
+  @ManyToOne(() => Game, { nullable: true, eager: true, onDelete: "SET NULL" })
+  @JoinColumn({ name: "gameId" })
+  game?: Game | null;
+
+  @Column({ type: "int", nullable: true })
+  gameId?: number | null;
 
   @CreateDateColumn()
   createdAt!: Date;

@@ -3,6 +3,9 @@ import { DataSource } from "typeorm";
 import { ENV } from "../env";
 import { Clip } from "./entities/Clip";
 import { Channel } from "./entities/Channel";
+import { User } from "./entities/User";
+import { LinkedAccount } from "./entities/LinkedAccount";
+import { Game } from "./entities/Game";
 
 export default new DataSource({
   type: "postgres",
@@ -13,7 +16,7 @@ export default new DataSource({
   database: ENV.PG_DATABASE,
   synchronize: ENV.PG_SYNC,
   logging: true,
-  entities: [Clip, Channel],
+  entities: [Clip, Channel, User, LinkedAccount, Game],
   migrations: ["src/db/migrations/*.ts"],
   migrationsTableName: "migrations_streamclip",
 });

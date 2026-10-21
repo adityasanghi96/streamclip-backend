@@ -6,7 +6,14 @@ import { isOlderThan } from "../utils/time";
 import AppDataSource from "../db/data-source";
 import { Clip } from "../db/entities/Clip";
 import { Channel } from "../db/entities/Channel";
-import axios from "axios";
+import { LinkedAccount } from "../db/entities/LinkedAccount";
+import { toPublicClip } from "../utils/serialize";
+import { parseLimitOffset, parseSource } from "../utils/query";
+import { fetchKickLivestream, kickLivestreamGame } from "../services/kick.service";
+import { createTwitchClip, fetchTwitchStreamGame, refreshTwitchUserToken } from "../services/twitch.service";
+import { notifyClipPosted } from "../services/clipNotify.service";
+import { ENV } from "../env";
+import { detectedGame, detectYoutubeGame, upsertGame } from "../services/game.service";
 
 const router = Router();
 
@@ -27,6 +34,57 @@ router.get("/health", async (req, res) => {
   }
 });
 
+router.get("/config", (_req, res) => {
+  res.status(200).json({
+    discordSupportServerUrl: ENV.DISCORD_SUPPORT_SERVER_URL || null,
+  });
+});
+
+async function resolveChannel(provider: string, channelId: string) {
+  const chanRepo = AppDataSource.getRepository(Channel);
+  let channel = await chanRepo.findOneBy({ ytChannelId: channelId });
+  if (provider === "youtube") {
+    const shouldRefresh = channel && isOlderThan(channel.updatedAt, 24);
+    if (!channel || shouldRefresh) {
+      const info = await fetchYouTubeChannelInfo(channelId);
+      if (!info) return null;
+      if (!channel) {
+        channel = chanRepo.create({
+          ytChannelId: channelId,
+          provider: "youtube",
+          name: info.name,
+          imageUrl: info.imageUrl,
+          handle: info.handle,
+          profileUrl: info.url,
+          followerCount: info.followerCount,
+        });
+      } else {
+        channel.name = info.name;
+        channel.imageUrl = info.imageUrl;
+        channel.handle = info.handle;
+        channel.profileUrl = info.url;
+        if (typeof info.followerCount === "number") channel.followerCount = info.followerCount;
+      }
+      await chanRepo.save(channel);
+    }
+  }
+  return channel;
+}
+
+async function twitchUserAccessToken(channelId: string) {
+  const linkedRepo = AppDataSource.getRepository(LinkedAccount);
+  const account = await linkedRepo.findOneBy({ provider: "twitch", externalId: channelId });
+  if (!account?.accessToken) return null;
+  const stillValid = account.tokenExpiresAt && account.tokenExpiresAt.getTime() > Date.now() + 30_000;
+  if (stillValid || !account.refreshToken) return account.accessToken;
+  const refreshed = await refreshTwitchUserToken(account.refreshToken);
+  account.accessToken = refreshed.accessToken;
+  account.refreshToken = refreshed.refreshToken;
+  account.tokenExpiresAt = refreshed.tokenExpiresAt;
+  await linkedRepo.save(account);
+  return account.accessToken;
+}
+
 router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
   try {
     const { provider, channelId, chatId, clipName } = req.params;
@@ -36,115 +94,78 @@ router.get("/clip/:provider/:channelId/:chatId/:clipName", async (req, res) => {
 
     console.log(`Clip request: ${provider} ${channelId} ${chatId} ${clipName} ${delaySeconds} ${clippedBy}`);
 
-    if (provider !== "youtube") {
-      return res.status(400).send("Only YouTube supported currently");
+    if (!["youtube", "twitch", "kick"].includes(provider)) {
+      return res.status(400).send("Unsupported provider");
     }
 
-    const liveVideoId = await getActiveLiveVideoId(channelId);
-    if (!liveVideoId) return res.status(404).send("Channel not live");
+    const channel = await resolveChannel(provider, channelId);
+    if (!channel) return res.status(404).send("Channel not found. Link it in the dashboard first.");
 
-    // Now pass *videoId*
-    const {offsetSec: offsetSeconds, title, thumbnailUrl, isDvrEnabled, youtubeUrl} = await getLiveStreamOffset(liveVideoId);
-    if (!offsetSeconds) return res.status(404).send("Could not fetch live stream offset");
+    let liveVideoId = "";
+    let offsetSeconds = "0";
+    let thumbnailUrl: string | undefined;
+    let title = clipName || "clip";
+    let game = null as Awaited<ReturnType<typeof detectYoutubeGame>>;
 
-    const finalOffset = Math.max(0, offsetSeconds + delaySeconds);
-
-    console.log({ offsetSeconds, finalOffset});
-
-    const chanRepo = AppDataSource.getRepository(Channel);
-
-    let channel = await chanRepo.findOneBy({ ytChannelId: channelId });
-
-    const shouldRefresh = channel && isOlderThan(channel.updatedAt, 24);
-
-    if (!channel || shouldRefresh) {
-      const info = await fetchYouTubeChannelInfo(channelId);
-      if (!info) return res.status(404).send("Channel info not found via YouTube API");
-
-      if (!channel) {
-        // Create new
-        channel = chanRepo.create({
-          ytChannelId: channelId,
-          name: info.name,
-          imageUrl: info.imageUrl,
-          handle: info.handle,
-          profileUrl: info.url
-        });
-      } else {
-        // Refresh existing
-        channel.name = info.name;
-        channel.imageUrl = info.imageUrl;
-        channel.handle = info.handle;
-        channel.profileUrl = info.url;
-      }
-
-      await chanRepo.save(channel);
+    if (provider === "youtube") {
+      const currentLive = await getActiveLiveVideoId(channelId);
+      if (!currentLive) return res.status(404).send("Channel not live");
+      const live = await getLiveStreamOffset(currentLive);
+      if (live.offsetSec == null) return res.status(404).send("Could not fetch live stream offset");
+      liveVideoId = currentLive;
+      offsetSeconds = String(Math.max(0, Number(live.offsetSec || 0) + delaySeconds));
+      thumbnailUrl = live.thumbnailUrl || undefined;
+      title = clipName || live.title || "clip";
+      game = await detectYoutubeGame({
+        title: live.title,
+        tags: live.tags,
+        topicCategories: live.topicCategories,
+      });
+    } else if (provider === "twitch") {
+      const token = await twitchUserAccessToken(channelId);
+      if (!token) return res.status(400).send("Reconnect Twitch in the dashboard so chat can clip.");
+      const created = await createTwitchClip(token, channelId);
+      liveVideoId = created.id;
+      title = clipName || "Twitch clip";
+      const streamGame = await fetchTwitchStreamGame(channelId);
+      game = streamGame ? detectedGame(streamGame.name, streamGame.imageUrl) : null;
+    } else {
+      const livestream = await fetchKickLivestream(channelId);
+      if (!livestream) return res.status(404).send("Channel not live");
+      liveVideoId = String(livestream.livestream_id || livestream.id || channel.handle || channelId);
+      const started = livestream.started_at ? new Date(livestream.started_at).getTime() : 0;
+      offsetSeconds = String(started ? Math.max(0, Math.floor((Date.now() - started) / 1000) + delaySeconds) : 0);
+      thumbnailUrl = livestream.thumbnail || undefined;
+      title = clipName || livestream.session_title || "Kick clip";
+      const category = kickLivestreamGame(livestream);
+      game = category ? detectedGame(category.name, category.imageUrl) : null;
     }
+
+    const savedGame = game ? await upsertGame(game) : null;
 
     const clipRepo = AppDataSource.getRepository(Clip);
-
     const clip = clipRepo.create({
       provider,
       channelId: channel.id,
       channel,
       chatId,
-      clipName,
+      clipName: title,
       liveVideoId,
-      offsetSeconds: finalOffset.toString(),
+      offsetSeconds,
       clippedBy,
-      thumbnailUrl
+      thumbnailUrl,
+      source: "nightbot",
+      gameId: savedGame?.id ?? null,
+      game: savedGame,
     });
-
     await clipRepo.save(clip);
 
-    if (channel.discordWebhookUrl) {
-      const ytClipUrl = `https://www.youtube.com/watch?v=${liveVideoId}&t=${finalOffset}s`;
-      const offsetFormatted = formatOffset(finalOffset);
-      const embedPayload = {
-        embeds: [
-          {
-            title: `🎬 ${clip.clipName || clipName || title}`,
-            url: ytClipUrl,
-            description: `⏱️ Jump to **${offsetFormatted}** in the stream`,
-            color: 0xff0000,
-            author: {
-              name: channel.name || channel.handle || channel.ytChannelId,
-              url: channel.profileUrl
-            },
-            thumbnail: {
-              url: channel.imageUrl || undefined
-            },
-            image: thumbnailUrl ? { url: thumbnailUrl } : undefined,
-            fields: [
-              {
-                name: "Clipped by",
-                value: clippedBy,
-                inline: true
-              },
-              {
-                name: "Video ID",
-                value: liveVideoId,
-                inline: true
-              }
-            ],
-            footer: {
-              text: `Clip offset: ${offsetFormatted}`
-            },
-            timestamp: new Date().toISOString()
-          }
-        ]
-      };
-      try {
-        await axios.post(channel.discordWebhookUrl, embedPayload);
-        updatedInDiscord=true;
-      } catch (err) {
-        console.error("Failed to send Discord webhook", err);
-      }
-    }
+    updatedInDiscord = await notifyClipPosted(channel, clip, channel.discordWebhookUrl);
     return res.status(200).send("New clip created. Clipped by: " + clippedBy + (updatedInDiscord ? " Updated in discord." : ""));
   } catch (err) {
-    console.error(err);
-    res.status(500).send("Internal error");
+    const status = (err as { status?: number }).status || 500;
+    if (status >= 500) console.error(err);
+    res.status(status).send((err as Error).message || "Internal error");
   }
 });
 
@@ -152,8 +173,8 @@ router.post("/channel/clips", channelClipsLimiter, async (req, res) => {
   try {
     const body = req.body || {};
     const { channelId: ytChannelIdParam, handle: handleParam } = body;
-    const limit = Math.min(Math.max(Number(body.limit) || 20, 1), 100);
-    const offset = Math.max(Number(body.offset) || 0, 0);
+    const { limit, offset } = parseLimitOffset(body);
+    const source = parseSource(body.source);
 
     if (!ytChannelIdParam && !handleParam) {
       return res.status(400).json({ error: "channelId or handle required" });
@@ -180,18 +201,21 @@ router.post("/channel/clips", channelClipsLimiter, async (req, res) => {
     }
 
     const clipRepo = AppDataSource.getRepository(Clip);
+    const where: { channelId: number; source?: "native" | "nightbot" } = { channelId: channel.id };
+    if (source) where.source = source;
     const [clips, total] = await clipRepo.findAndCount({
-      where: { channelId: channel.id },
+      where,
       order: { createdAt: "DESC" },
       take: limit,
       skip: offset,
     });
 
     return res.status(200).json({
-      clips,
+      clips: clips.map(toPublicClip),
       total,
       limit,
       offset,
+      source: source || null,
     });
   } catch (err) {
     console.error(err);
@@ -258,10 +282,3 @@ router.post("/discord/webhook", async (req, res) => {
 
 
 export default router;
-
-function formatOffset(seconds: number) {
-  const h = Math.floor(seconds / 3600).toString().padStart(2, "0");
-  const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, "0");
-  const s = (seconds % 60).toString().padStart(2, "0");
-  return `${h}:${m}:${s}`;
-}
