@@ -8,16 +8,22 @@ import usersRoute from "./routes/users.route";
 import clipsRoute from "./routes/clips.route";
 import gamesRoute from "./routes/games.route";
 
-const allowedOrigins = [
+const allowedOrigins: Array<string | RegExp> = [
   "http://localhost:3000",
   "http://127.0.0.1:3000",
+  /^https?:\/\/(www\.)?streamclip\.in(:\d+)?$/,
+  /^https?:\/\/[a-z0-9-]+\.streamclip\.in(:\d+)?$/,
   /^https?:\/\/[a-z0-9-]+\.cancanarycan\.in(:\d+)?$/,
 ];
 
+function isAllowedOrigin(origin: string) {
+  return allowedOrigins.some((allowed) =>
+    typeof allowed === "string" ? allowed === origin : allowed.test(origin)
+  );
+}
+
 function corsOrigin(origin: string | undefined, callback: (err: Error | null, allow?: boolean | string) => void) {
-  if (!origin) return callback(null, true);
-  if (origin === "http://localhost:3000" || origin === "http://127.0.0.1:3000") return callback(null, origin);
-  if (allowedOrigins.some((o) => o instanceof RegExp && o.test(origin))) return callback(null, origin);
+  if (!origin || isAllowedOrigin(origin)) return callback(null, origin || true);
   callback(null, false);
 }
 
