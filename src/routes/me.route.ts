@@ -148,6 +148,10 @@ function upsertYoutubeEntry(
   });
 }
 
+function isYoutubeOwnedChannel(channel: Channel) {
+  return !channel.provider || channel.provider === "youtube";
+}
+
 async function youtubeChannelsFromDb(userId: number) {
   const userRepo = AppDataSource.getRepository(User);
   const chanRepo = AppDataSource.getRepository(Channel);
@@ -155,12 +159,25 @@ async function youtubeChannelsFromDb(userId: number) {
   const user = await userRepo.findOneByOrFail({ id: userId });
   const byId = new Map<string, GoogleYoutubeChannel>();
 
+  const owned = await chanRepo.find({ where: { ownerId: userId } });
+  const otherAccounts = await linkedRepo.find({
+    where: [
+      { userId, provider: "twitch" },
+      { userId, provider: "kick" },
+    ],
+  });
+  const otherIds = new Set<string>([
+    ...owned.filter((channel) => !isYoutubeOwnedChannel(channel)).map((channel) => channel.ytChannelId),
+    ...otherAccounts.map((account) => account.externalId),
+  ]);
+
   for (const channel of user.googleYoutubeChannels || []) {
+    if (otherIds.has(channel.id)) continue;
     upsertYoutubeEntry(byId, { ...channel, hasAccess: true }, true);
   }
 
-  const owned = await chanRepo.find({ where: { ownerId: userId } });
   for (const channel of owned) {
+    if (!isYoutubeOwnedChannel(channel) || otherIds.has(channel.ytChannelId)) continue;
     upsertYoutubeEntry(byId, {
       id: channel.ytChannelId,
       name: channel.name,
@@ -172,6 +189,7 @@ async function youtubeChannelsFromDb(userId: number) {
 
   const linked = await linkedRepo.find({ where: { userId, provider: "youtube" } });
   for (const account of linked) {
+    if (otherIds.has(account.externalId)) continue;
     upsertYoutubeEntry(byId, {
       id: account.externalId,
       name: account.name,
@@ -431,9 +449,11 @@ router.get("/channels", async (req, res) => {
   try {
     const user = getAuthUser(req);
     const { limit, offset } = parseLimitOffset(req.query);
+    const provider = parseProvider(req.query.provider);
     const chanRepo = AppDataSource.getRepository(Channel);
+    const where = provider ? { ownerId: user.id, provider } : { ownerId: user.id };
     const [channels, total] = await chanRepo.findAndCount({
-      where: { ownerId: user.id },
+      where,
       order: { createdAt: "DESC" },
       take: limit,
       skip: offset,
@@ -444,6 +464,7 @@ router.get("/channels", async (req, res) => {
       total,
       limit,
       offset,
+      provider: provider || null,
     });
   } catch (err) {
     console.error(err);
