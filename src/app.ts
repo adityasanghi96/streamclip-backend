@@ -34,6 +34,9 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization"],
 }));
 app.use(express.json());
+app.get(["/api", "/api/"], (_req, res) => {
+  res.redirect(301, "/");
+});
 app.use("/api/auth", authRoute);
 app.use("/api/me", meRoute);
 app.use("/api/channels", channelsRoute);
