@@ -45,6 +45,9 @@ router.patch("/credentials", async (req, res) => {
     if (!user) return res.status(401).json({ error: "Unauthorized" });
 
     if (hasUsername) {
+      if (user.username) {
+        return res.status(400).json({ error: "Username cannot be changed" });
+      }
       const username = normalizeUsername(body.username);
       if (!username) {
         return res.status(400).json({
@@ -59,9 +62,6 @@ router.patch("/credentials", async (req, res) => {
     }
 
     if (hasPassword) {
-      if (user.passwordHash) {
-        return res.status(400).json({ error: "Password cannot be changed" });
-      }
       if (!user.username) {
         return res.status(400).json({ error: "Set a username before setting a password" });
       }
