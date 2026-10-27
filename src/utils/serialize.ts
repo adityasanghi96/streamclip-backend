@@ -9,6 +9,8 @@ export function toPublicUser(user: User) {
     id: user.id,
     email: user.email,
     name: user.name,
+    username: user.username ?? null,
+    hasPassword: Boolean(user.passwordHash),
     picture: user.picture ?? null,
     googleYoutubeChannels: user.googleYoutubeChannels ?? [],
   };

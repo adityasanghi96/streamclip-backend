@@ -31,6 +31,12 @@ export class User {
   @Column()
   name!: string;
 
+  @Column({ type: "varchar", unique: true, nullable: true })
+  username?: string | null;
+
+  @Column({ type: "varchar", nullable: true })
+  passwordHash?: string | null;
+
   @Column({ nullable: true })
   picture?: string;
 

@@ -12,6 +12,7 @@ import { exchangeTwitchOAuth, startTwitchOAuth } from "../services/twitch.servic
 import { exchangeYoutubeGisCode, exchangeYoutubeOAuth, startYoutubeOAuth } from "../services/googleYoutubeOauth.service";
 import { fetchMyYouTubeChannels, fetchYouTubeChannelInfo } from "../services/youtubeChannel.service";
 import { GoogleYoutubeChannel } from "../db/entities/User";
+import { hashPassword, normalizeUsername, validatePassword } from "../services/credentials.service";
 import { toLinkedAccount, toOwnerChannel, toPublicClip, toPublicUser } from "../utils/serialize";
 import { parseLimitOffset, parseProvider, parseSource } from "../utils/query";
 
@@ -27,6 +28,60 @@ function alreadyLinkedError(): never {
 }
 
 router.use(requireAuth);
+
+router.patch("/credentials", async (req, res) => {
+  try {
+    const authUser = getAuthUser(req);
+    const body = req.body ?? {};
+    const hasUsername = Object.prototype.hasOwnProperty.call(body, "username");
+    const hasPassword = Object.prototype.hasOwnProperty.call(body, "password");
+    if (!hasUsername && !hasPassword) {
+      return res.status(400).json({ error: "Nothing to update" });
+    }
+
+    const userRepo = AppDataSource.getRepository(User);
+    const user = await userRepo.findOneBy({ id: authUser.id });
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+    if (hasUsername) {
+      const username = normalizeUsername(body.username);
+      if (!username) {
+        return res.status(400).json({
+          error: "Username must be 3–32 characters and use only letters, numbers, and underscores",
+        });
+      }
+      const taken = await userRepo.findOneBy({ username });
+      if (taken && taken.id !== user.id) {
+        return res.status(409).json({ error: "Username is already taken" });
+      }
+      user.username = username;
+    }
+
+    if (hasPassword) {
+      if (user.passwordHash) {
+        return res.status(400).json({ error: "Password cannot be changed" });
+      }
+      if (!user.username) {
+        return res.status(400).json({ error: "Set a username before setting a password" });
+      }
+      const password = validatePassword(body.password);
+      if (!password) {
+        return res.status(400).json({ error: "Password must be 8–72 characters" });
+      }
+      user.passwordHash = await hashPassword(password);
+    }
+
+    await userRepo.save(user);
+    return res.status(200).json({ user: toPublicUser(user) });
+  } catch (err) {
+    const code = (err as { driverError?: { code?: string } }).driverError?.code;
+    if (code === "23505") {
+      return res.status(409).json({ error: "Username is already taken" });
+    }
+    console.error(err);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
 
 router.get("/", async (req, res) => {
   try {
