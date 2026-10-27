@@ -1,5 +1,6 @@
 import axios from "axios";
 import { ENV } from "../env";
+import { orientationFromSize, type StreamOrientation } from "./liveChat.types";
 
 export async function getActiveLiveVideoId(channelId: string) {
   const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${channelId}&eventType=live&type=video&key=${ENV.YT_API_KEY}`;
@@ -71,11 +72,55 @@ export async function getLiveStreamOffset(liveVideoId: string) {
   };
 }
 
-// Helper to get Live Chat ID
-export async function getLiveChatId(videoId: string) {
-  const url = `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${videoId}&key=${ENV.YT_API_KEY}`;
+export type YoutubeLiveBroadcastInfo = {
+  liveChatId: string | null;
+  orientation: StreamOrientation;
+  thumbnailUrl: string | null;
+};
+
+export async function getLiveBroadcastInfo(videoId: string): Promise<YoutubeLiveBroadcastInfo> {
+  const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id=${videoId}&key=${ENV.YT_API_KEY}`;
   const res = await axios.get(url);
-  return res.data.items?.[0]?.liveStreamingDetails?.activeLiveChatId || null;
+  const item = res.data.items?.[0];
+  const thumbs = item?.snippet?.thumbnails || {};
+  const best = thumbs.maxres || thumbs.standard || thumbs.high || thumbs.medium || thumbs.default;
+  return {
+    liveChatId: item?.liveStreamingDetails?.activeLiveChatId || null,
+    orientation: orientationFromSize(best?.width, best?.height),
+    thumbnailUrl: best?.url || null,
+  };
+}
+
+export async function getLiveChatId(videoId: string) {
+  const info = await getLiveBroadcastInfo(videoId);
+  return info.liveChatId;
+}
+
+export type YoutubeLiveChatPage = {
+  items: Record<string, any>[];
+  nextPageToken: string | null;
+  pollingIntervalMillis: number;
+  offlineAt: string | null;
+};
+
+export async function fetchLiveChatMessages(
+  liveChatId: string,
+  pageToken?: string | null
+): Promise<YoutubeLiveChatPage> {
+  const url = new URL("https://www.googleapis.com/youtube/v3/liveChat/messages");
+  url.searchParams.set("liveChatId", liveChatId);
+  url.searchParams.set("part", "snippet,authorDetails");
+  url.searchParams.set("profileImageSize", "88");
+  url.searchParams.set("key", ENV.YT_API_KEY);
+  if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+  const res = await axios.get(url.toString());
+  return {
+    items: Array.isArray(res.data.items) ? res.data.items : [],
+    nextPageToken: res.data.nextPageToken || null,
+    pollingIntervalMillis: Number(res.data.pollingIntervalMillis || 5000),
+    offlineAt: res.data.offlineAt || null,
+  };
 }
 
 // Helper to fetch Live Chat Moderators

@@ -7,6 +7,7 @@ import channelsRoute from "./routes/channels.route";
 import usersRoute from "./routes/users.route";
 import clipsRoute from "./routes/clips.route";
 import gamesRoute from "./routes/games.route";
+import kickWebhookRoute from "./routes/kickWebhook.route";
 
 const allowedOrigins: Array<string | RegExp> = [
   "http://localhost:3000",
@@ -33,6 +34,7 @@ app.use(cors({
   credentials: true,
   allowedHeaders: ["Content-Type", "Authorization"],
 }));
+app.use("/api/webhooks/kick", express.raw({ type: "*/*" }), kickWebhookRoute);
 app.use(express.json());
 app.get(["/api", "/api/"], (_req, res) => {
   res.redirect(301, "/");

@@ -15,6 +15,7 @@ import { GoogleYoutubeChannel } from "../db/entities/User";
 import { hashPassword, normalizeUsername, validatePassword } from "../services/credentials.service";
 import { toLinkedAccount, toOwnerChannel, toPublicClip, toPublicUser } from "../utils/serialize";
 import { parseLimitOffset, parseProvider, parseSource } from "../utils/query";
+import { openLiveChatSession, unsubscribeKickOnUnlink } from "../services/liveChat.hub";
 
 const router = Router();
 
@@ -492,6 +493,10 @@ router.delete("/accounts/:id", async (req, res) => {
       await removeYoutubeChannelFromUser(user.id, account.externalId);
     }
 
+    if (account.provider === "kick") {
+      await unsubscribeKickOnUnlink(account.externalId);
+    }
+
     await repo.remove(account);
     return res.status(200).json({ message: "Account unlinked" });
   } catch (err) {
@@ -649,6 +654,55 @@ router.put("/channels/:ytChannelId/webhook", async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.get("/live-chat", async (req, res) => {
+  const user = getAuthUser(req);
+  req.socket.setTimeout(0);
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  if (typeof res.flushHeaders === "function") res.flushHeaders();
+
+  const session = openLiveChatSession(user.id, (event) => {
+    if (res.writableEnded) return;
+    res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+  });
+
+  const ping = setInterval(() => {
+    if (!res.writableEnded) res.write(": ping\n\n");
+  }, 20_000);
+
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    clearInterval(ping);
+    session.close();
+    if (!res.writableEnded) res.end();
+  };
+  req.on("close", close);
+  req.on("aborted", close);
+
+  try {
+    await session.start();
+    await new Promise<void>((resolve) => {
+      if (closed) return resolve();
+      req.on("close", () => resolve());
+    });
+  } catch (err) {
+    console.error(err);
+    if (!res.writableEnded) {
+      res.write(
+        `event: status\ndata: ${JSON.stringify({
+          type: "status",
+          status: { code: "error", message: "Could not start live chat." },
+        })}\n\n`
+      );
+    }
+    close();
   }
 });
 

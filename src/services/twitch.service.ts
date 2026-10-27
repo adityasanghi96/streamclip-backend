@@ -6,7 +6,7 @@ import { getTwitchAppToken, RemoteAccount } from "./streaming.service";
 const TWITCH_AUTHORIZE_URL = "https://id.twitch.tv/oauth2/authorize";
 const TWITCH_TOKEN_URL = "https://id.twitch.tv/oauth2/token";
 const TWITCH_USERS_URL = "https://api.twitch.tv/helix/users";
-const TWITCH_SCOPES = "user:read:email clips:edit";
+const TWITCH_SCOPES = "user:read:email clips:edit user:read:chat";
 
 type PendingTwitchOauth = {
   userId: number;
@@ -174,7 +174,16 @@ export async function fetchTwitchGamesByName(names: string[]) {
   return map;
 }
 
-export async function fetchTwitchStreamGame(userId: string) {
+export type TwitchLiveStream = {
+  id: string;
+  userId: string;
+  title: string;
+  thumbnailUrl: string;
+  gameName: string | null;
+  gameId: string | null;
+};
+
+export async function fetchTwitchStream(userId: string): Promise<TwitchLiveStream | null> {
   const token = await getTwitchAppToken();
   if (!token || !ENV.TWITCH_CLIENT_ID) return null;
   const res = await axios.get("https://api.twitch.tv/helix/streams", {
@@ -185,15 +194,83 @@ export async function fetchTwitchStreamGame(userId: string) {
     },
   });
   const stream = res.data?.data?.[0];
-  if (!stream?.game_name) return null;
-  const games = stream.game_id ? await fetchTwitchGames([String(stream.game_id)]) : new Map();
-  const art = games.get(String(stream.game_id || ""));
+  if (!stream?.id) return null;
   return {
-    name: String(stream.game_name),
-    slug: String(stream.game_name),
-    imageUrl: art?.imageUrl || null,
+    id: String(stream.id),
+    userId: String(stream.user_id || userId),
+    title: String(stream.title || ""),
+    thumbnailUrl: twitchThumbnail(stream.thumbnail_url),
+    gameName: stream.game_name ? String(stream.game_name) : null,
     gameId: stream.game_id ? String(stream.game_id) : null,
   };
+}
+
+export async function fetchTwitchStreamGame(userId: string) {
+  const stream = await fetchTwitchStream(userId);
+  if (!stream?.gameName) return null;
+  const games = stream.gameId ? await fetchTwitchGames([stream.gameId]) : new Map();
+  const art = games.get(stream.gameId || "");
+  return {
+    name: stream.gameName,
+    slug: stream.gameName,
+    imageUrl: art?.imageUrl || null,
+    gameId: stream.gameId,
+  };
+}
+
+export async function twitchTokenScopes(accessToken: string): Promise<string[]> {
+  const res = await axios.get("https://id.twitch.tv/oauth2/validate", {
+    headers: { Authorization: `OAuth ${accessToken}` },
+  });
+  return Array.isArray(res.data?.scopes) ? res.data.scopes.map(String) : [];
+}
+
+export function twitchHasChatRead(scopes: string[]) {
+  return scopes.includes("user:read:chat") || scopes.includes("chat:read");
+}
+
+const twitchAvatarCache = new Map<string, { url: string | null; expiresAt: number }>();
+
+export async function fetchTwitchProfileImages(userIds: string[]) {
+  const unique = [...new Set(userIds.map(String).filter(Boolean))];
+  const now = Date.now();
+  const missing: string[] = [];
+  const result = new Map<string, string | null>();
+  for (const id of unique) {
+    const cached = twitchAvatarCache.get(id);
+    if (cached && cached.expiresAt > now) result.set(id, cached.url);
+    else missing.push(id);
+  }
+  if (!missing.length) return result;
+
+  const token = await getTwitchAppToken();
+  if (!token || !ENV.TWITCH_CLIENT_ID) return result;
+
+  for (let i = 0; i < missing.length; i += 100) {
+    const chunk = missing.slice(i, i + 100);
+    const search = new URLSearchParams();
+    for (const id of chunk) search.append("id", id);
+    const res = await axios.get(`https://api.twitch.tv/helix/users?${search.toString()}`, {
+      headers: {
+        "Client-ID": ENV.TWITCH_CLIENT_ID,
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const found = new Set<string>();
+    for (const user of res.data?.data || []) {
+      const id = String(user.id);
+      const url = user.profile_image_url ? String(user.profile_image_url) : null;
+      found.add(id);
+      twitchAvatarCache.set(id, { url, expiresAt: now + 30 * 60 * 1000 });
+      result.set(id, url);
+    }
+    for (const id of chunk) {
+      if (found.has(id)) continue;
+      twitchAvatarCache.set(id, { url: null, expiresAt: now + 5 * 60 * 1000 });
+      result.set(id, null);
+    }
+  }
+  return result;
 }
 
 export function twitchBoxArt(url?: string) {

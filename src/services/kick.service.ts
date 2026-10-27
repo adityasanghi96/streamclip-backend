@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "crypto";
+import { createHash, createPublicKey, createVerify, randomBytes } from "crypto";
 import axios from "axios";
 import { ENV } from "../env";
 import { cleanKickUsername, RemoteAccount } from "./streaming.service";
@@ -154,6 +154,119 @@ export async function fetchKickLivestream(broadcasterUserId: string) {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
   return res.data?.data?.[0] || null;
+}
+
+export function kickLivestreamId(livestream: Record<string, any> | null) {
+  if (!livestream) return null;
+  const id = livestream.livestream_id || livestream.id;
+  return id ? String(id) : null;
+}
+
+export async function refreshKickUserToken(refreshToken: string) {
+  requireKickConfig();
+  const res = await axios.post(
+    KICK_TOKEN_URL,
+    new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: ENV.KICK_CLIENT_ID,
+      client_secret: ENV.KICK_CLIENT_SECRET,
+      refresh_token: refreshToken,
+    }),
+    { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+  );
+  const accessToken = res.data?.access_token;
+  if (!accessToken) throw Object.assign(new Error("Could not refresh Kick login"), { status: 401 });
+  return {
+    accessToken: String(accessToken),
+    refreshToken: res.data?.refresh_token ? String(res.data.refresh_token) : refreshToken,
+    tokenExpiresAt: new Date(Date.now() + Number(res.data.expires_in || 3600) * 1000),
+  };
+}
+
+const KICK_CHAT_EVENTS = ["chat.message.sent", "kicks.gifted"] as const;
+
+type KickEventSubscription = {
+  id?: string;
+  event?: string;
+  name?: string;
+  broadcaster_user_id?: number;
+};
+
+async function listKickEventSubscriptions(broadcasterUserId: string): Promise<KickEventSubscription[]> {
+  const token = await getKickAppToken();
+  const res = await axios.get(`${KICK_API}/events/subscriptions`, {
+    params: { broadcaster_user_id: Number(broadcasterUserId) },
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+  });
+  return Array.isArray(res.data?.data) ? res.data.data : [];
+}
+
+export async function ensureKickChatSubscription(broadcasterUserId: string) {
+  const existing = await listKickEventSubscriptions(broadcasterUserId);
+  const have = new Set(
+    existing
+      .map((item) => String(item.event || item.name || ""))
+      .filter(Boolean)
+  );
+  const missing = KICK_CHAT_EVENTS.filter((name) => !have.has(name));
+  if (!missing.length) return;
+
+  const token = await getKickAppToken();
+  await axios.post(
+    `${KICK_API}/events/subscriptions`,
+    {
+      broadcaster_user_id: Number(broadcasterUserId),
+      events: missing.map((name) => ({ name, version: 1 })),
+    },
+    { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } }
+  );
+}
+
+export async function removeKickChatSubscriptions(broadcasterUserId: string) {
+  const existing = await listKickEventSubscriptions(broadcasterUserId);
+  const ids = existing
+    .filter((item) => KICK_CHAT_EVENTS.includes(String(item.event || item.name || "") as (typeof KICK_CHAT_EVENTS)[number]))
+    .map((item) => item.id)
+    .filter(Boolean) as string[];
+  if (!ids.length) return;
+
+  const token = await getKickAppToken();
+  const search = new URLSearchParams();
+  for (const id of ids) search.append("id", id);
+  await axios.delete(`${KICK_API}/events/subscriptions?${search.toString()}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+  });
+}
+
+let kickPublicKeyPem: { pem: string; expiresAt: number } | null = null;
+
+async function getKickPublicKeyPem() {
+  if (kickPublicKeyPem && kickPublicKeyPem.expiresAt > Date.now()) return kickPublicKeyPem.pem;
+  const res = await axios.get(`${KICK_API}/public-key`, { headers: { Accept: "application/json" } });
+  const pem = res.data?.data?.public_key || res.data?.public_key;
+  if (!pem) throw new Error("Kick public key missing");
+  kickPublicKeyPem = { pem: String(pem), expiresAt: Date.now() + 60 * 60 * 1000 };
+  return kickPublicKeyPem.pem;
+}
+
+export async function verifyKickWebhook(headers: Record<string, string | string[] | undefined>, rawBody: Buffer) {
+  const messageId = String(headers["kick-event-message-id"] || "");
+  const timestamp = String(headers["kick-event-message-timestamp"] || "");
+  const signature = String(headers["kick-event-signature"] || "");
+  if (!messageId || !timestamp || !signature) return false;
+
+  const signed = `${messageId}.${timestamp}.${rawBody.toString("utf8")}`;
+  try {
+    const pem = await getKickPublicKeyPem();
+    const key = createPublicKey(pem);
+    const verifier = createVerify("SHA256");
+    verifier.update(signed);
+    verifier.end();
+    return verifier.verify(key, signature, "base64");
+  } catch (err) {
+    console.error("Kick webhook signature failed", err);
+    return false;
+  }
 }
 
 export function kickLivestreamGame(livestream: Record<string, any> | null) {

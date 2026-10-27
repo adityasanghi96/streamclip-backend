@@ -57,6 +57,7 @@ export function toLinkedAccount(account: LinkedAccount) {
     imageUrl: account.imageUrl ?? null,
     profileUrl: account.profileUrl ?? null,
     discordWebhookUrl: account.discordWebhookUrl ?? null,
+    hasToken: Boolean(account.accessToken),
     createdAt: account.createdAt,
   };
 }
